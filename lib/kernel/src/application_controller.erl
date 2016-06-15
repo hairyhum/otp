@@ -20,8 +20,8 @@
 -module(application_controller).
 
 %% External exports
--export([start/1, 
-	 load_application/1, unload_application/1, 
+-export([start/1,
+	 load_application/1, unload_application/1,
 	 start_application/2, start_boot_application/2, stop_application/1,
 	 control_application/1,
 	 change_application_data/2, prep_config_change/0, config_change/1,
@@ -34,7 +34,7 @@
 	 set_env/3, set_env/4, unset_env/2, unset_env/3]).
 
 %% Internal exports
--export([handle_call/3, handle_cast/2, handle_info/2, terminate/2, 
+-export([handle_call/3, handle_cast/2, handle_info/2, terminate/2,
 	 code_change/3, init_starter/4, get_loaded/1]).
 
 %% Test exports, only to be used from the test suites
@@ -59,7 +59,7 @@
 %%% may be running on one node at the time.
 %%%
 %%% The external API to this module is in the module 'application'.
-%%% 
+%%%
 %%% The process that controls distributed applications (called dist
 %%% ac).  calls application_controller:control_application(Name) to
 %%% take responsibility for an application.  The interface between AC
@@ -133,8 +133,10 @@
 -type appname() :: atom().
 
 -record(state, {loading = [], starting = [], start_p_false = [], running = [],
-		control = [], started = [], start_req = [], conf_data}).
+		control = [], started = [], start_req = [], conf_data, stopping = []}).
 -type state() :: #state{}.
+
+-record(stopping_app, {name, id, type, requesters, callbacks}).
 
 %%-----------------------------------------------------------------
 %% loading     = [{AppName, From}] - Load not yet finished
@@ -195,7 +197,7 @@ start(KernelApp) ->
 	{'EXIT', _Pid, Reason} ->
 	    to_string(Reason)
     end.
-	
+
 %%-----------------------------------------------------------------
 %% Func: load_application/1
 %% Args: Application = appl_descr() | atom()
@@ -237,7 +239,7 @@ start_application(AppName, RestartType) ->
 %% Func: start_boot_application/2
 %% The same as start_application/2 expect that this function is
 %% called from the boot script file. It mustnot be used by the operator.
-%% This function will cause a node crash if a permanent application 
+%% This function will cause a node crash if a permanent application
 %% fails to boot start
 %%-----------------------------------------------------------------
 start_boot_application(Application, RestartType) ->
@@ -262,7 +264,7 @@ stop_application(AppName) ->
 %% Returns: [{Name, Descr, Vsn}]
 %%-----------------------------------------------------------------
 which_applications() ->
-    gen_server:call(?AC, which_applications).    
+    gen_server:call(?AC, which_applications).
 which_applications(Timeout) ->
     gen_server:call(?AC, which_applications, Timeout).
 
@@ -277,7 +279,7 @@ loaded_applications() ->
 
 %% Returns some debug info
 info() ->
-    gen_server:call(?AC, info).    
+    gen_server:call(?AC, info).
 
 control_application(AppName) ->
     gen_server:call(?AC, {control_application, AppName}, infinity).
@@ -305,18 +307,18 @@ control_application(AppName) ->
 %%          some applicatation may have got new config data.
 %%-----------------------------------------------------------------
 change_application_data(Applications, Config) ->
-    gen_server:call(?AC, 
+    gen_server:call(?AC,
 		    {change_application_data, Applications, Config},
 		    infinity).
 
 prep_config_change() ->
-    gen_server:call(?AC, 
+    gen_server:call(?AC,
 		    prep_config_change,
 		    infinity).
 
 
 config_change(EnvPrev) ->
-    gen_server:call(?AC, 
+    gen_server:call(?AC,
 		    {config_change, EnvPrev},
 		    infinity).
 
@@ -356,7 +358,7 @@ get_pid_key(Master, Key) ->
 get_key(AppName, Key) ->
     case ets:lookup(ac_tab, {loaded, AppName}) of
 	[{_, Appl}] ->
-	    case Key of 
+	    case Key of
 		description ->
 		    {ok, Appl#appl.descr};
 		id ->
@@ -386,7 +388,7 @@ get_key(AppName, Key) ->
 	_ ->
 	    undefined
     end.
-	    
+
 get_pid_all_key(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
 	[[AppName]] -> get_all_key(AppName);
@@ -409,16 +411,16 @@ get_all_key(AppName) ->
 		  {mod, (Appl#appl.appl_data)#appl_data.mod},
 		  {start_phases, (Appl#appl.appl_data)#appl_data.phases}
 		 ]};
-	_ -> 
+	_ ->
 	    undefined
     end.
 
 
 start_type(Master) ->
     case ets:match(ac_tab, {{application_master, '$1'}, Master}) of
-	[[AppName]] -> 
+	[[AppName]] ->
 	    gen_server:call(?AC, {start_type, AppName}, infinity);
-	_X -> 
+	_X ->
 	    undefined
     end.
 
@@ -456,7 +458,7 @@ get_application_module(_Module, []) ->
     undefined.
 
 permit_application(ApplName, Flag) ->
-    gen_server:call(?AC, 
+    gen_server:call(?AC,
 		    {permit_application, ApplName, Flag},
 		    infinity).
 
@@ -552,13 +554,13 @@ check_conf_data(ConfData) when is_list(ConfData) ->
 		++ "; parameters must be a list",
 	    {error, ErrMsg};
 	Else ->
-	    ErrMsg = "invalid application name: " ++ 
+	    ErrMsg = "invalid application name: " ++
 		lists:flatten(io_lib:format(" ~tp",[Else])),
 	    {error, ErrMsg}
     end;
 check_conf_data(_ConfData) ->
     {error, 'configuration must be a list ended by <dot><whitespace>'}.
-    
+
 
 %% Special check of distributed parameter for kernel
 check_para_kernel([]) ->
@@ -575,12 +577,12 @@ check_para_kernel([{distributed, _Apps} | _ParaList]) ->
 check_para_kernel([{Para, _Val} | ParaList]) when is_atom(Para) ->
     check_para_kernel(ParaList);
 check_para_kernel([{Para, _Val} | _ParaList]) ->
-    {error, "application: kernel; invalid parameter: " ++ 
+    {error, "application: kernel; invalid parameter: " ++
      lists:flatten(io_lib:format("~tp",[Para]))};
 check_para_kernel(Else) ->
-    {error, "application: kernel; invalid parameter list: " ++ 
+    {error, "application: kernel; invalid parameter list: " ++
      lists:flatten(io_lib:format("~tp",[Else]))}.
-    
+
 
 check_distributed([]) ->
     ok;
@@ -599,10 +601,10 @@ check_para([], _AppName) ->
 check_para([{Para, _Val} | ParaList], AppName) when is_atom(Para) ->
     check_para(ParaList, AppName);
 check_para([{Para, _Val} | _ParaList], AppName) ->
-    {error, "application: " ++ AppName ++ "; invalid parameter: " ++ 
+    {error, "application: " ++ AppName ++ "; invalid parameter: " ++
      lists:flatten(io_lib:format("~tp",[Para]))};
 check_para([Else | _ParaList], AppName) ->
-    {error, "application: " ++ AppName ++ "; invalid parameter: " ++ 
+    {error, "application: " ++ AppName ++ "; invalid parameter: " ++
      lists:flatten(io_lib:format("~tp",[Else]))}.
 
 
@@ -651,7 +653,7 @@ handle_call({unload_application, AppName}, _From, S) ->
     end;
 
 handle_call({start_application, AppName, RestartType}, From, S) ->
-    #state{running = Running, starting = Starting, start_p_false = SPF, 
+    #state{running = Running, starting = Starting, start_p_false = SPF,
 	   started = Started, start_req = Start_req} = S,
     %% Check if the commandline environment variables are OK.
     %% Incase of erroneous variables do not start the application,
@@ -700,12 +702,14 @@ handle_call({permit_application, AppName, Bool}, From, S) ->
     SPF = S#state.start_p_false,
     Started = S#state.started,
     Running = S#state.running,
+    Stopping = S#state.stopping,
     Start_req = S#state.start_req,
     IsLoaded = get_loaded(AppName),
     IsStarting = lists:keysearch(AppName, 1, Starting),
     IsSPF = lists:keysearch(AppName, 1, SPF),
     IsStarted = lists:keysearch(AppName, 1, Started),
     IsRunning = lists:keysearch(AppName, 1, Running),
+    IsStopping = lists:keysearch(AppName, 1, Stopping),
 
     case lists:keymember(AppName, 1, Control) of
 	%%========================
@@ -728,38 +732,38 @@ handle_call({permit_application, AppName, Bool}, From, S) ->
 	%% local application
 	%%========================
 	false ->
-	    case {Bool, IsLoaded, IsStarting, IsSPF, IsStarted, IsRunning} of
+	    case {Bool, IsLoaded, IsStarting, IsSPF, IsStarted, IsRunning, IsStopping} of
 		%%------------------------
 		%% permit the applicaition
 		%%------------------------
 		%% already running
-		{true, _, _, _, _, {value, _Tuple}} ->
+		{true, _, _, _, _, {value, _Tuple}, _} ->
 		    {reply, ok, S};
 		%% not loaded
-		{true, false, _, _, _, _} ->
+		{true, false, _, _, _, _, _} ->
 		    {reply, {error, {not_loaded, AppName}}, S};
 		%% only loaded
-		{true, {true, _Appl}, false, false, false, false} ->
+		{true, {true, _Appl}, false, false, false, false, _} ->
 		    update_permissions(AppName, Bool),
-                    {reply, ok, S}; 
+                    {reply, ok, S};
 		%% starting
-		{true, {true, _Appl}, {value, _Tuple}, false, false, false} ->
+		{true, {true, _Appl}, {value, _Tuple}, false, false, false, _} ->
 		    update_permissions(AppName, Bool),
                     {reply, ok, S}; %% check the permission after then app is started
 		%% start requested but not started because permit was false
-		{true, {true, Appl}, false, {value, Tuple}, false, false} ->
+		{true, {true, Appl}, false, {value, Tuple}, false, false, _} ->
 		    update_permissions(AppName, Bool),
 		    {_AppName2, RestartType, normal, _From} = Tuple,
 		    spawn_starter(From, Appl, S, normal),
-		    SS = S#state{starting = [{AppName, RestartType, normal, From} | Starting], 
+		    SS = S#state{starting = [{AppName, RestartType, normal, From} | Starting],
 				 start_p_false = keydelete(AppName, 1, SPF),
 				 start_req = [{AppName, From} | Start_req]},
 		    {noreply, SS};
 		%% started but not running
-		{true, {true, Appl}, _, _, {value, {AppName, RestartType}}, false} ->
+		{true, {true, Appl}, _, _, {value, {AppName, RestartType}}, false, _} ->
 		    update_permissions(AppName, Bool),
 		    spawn_starter(From, Appl, S, normal),
-		    SS = S#state{starting = [{AppName, RestartType, normal, From} | Starting], 
+		    SS = S#state{starting = [{AppName, RestartType, normal, From} | Starting],
 				 started = keydelete(AppName, 1, Started),
 				 start_req = [{AppName, From} | Start_req]},
 		    {noreply, SS};
@@ -768,54 +772,82 @@ handle_call({permit_application, AppName, Bool}, From, S) ->
 		%% unpermit the application
 		%%==========================
 		%% running
-		{false, _, _, _,  _, {value, {_AppName, Id}}} ->
+        {false, _, _, _,  _, _, {value, StoppingApp}} ->
+            Requesters = StoppingApp#stopping_app.requesters,
+            NStoppingApp = StoppingApp#stopping_app{requesters = [From | Requesters]},
+            NStopping = store_stopping(NStoppingApp, Stopping),
+            {noreply, S#state{stopping = NStopping}};
+		{false, _, _, _,  _, {value, {_AppName, Id}}, _} ->
 		    {_AppName2, Type} = lists:keyfind(AppName, 1, Started),
-		    stop_appl(AppName, Id, Type),
+		    run_stop_appl(AppName, Id, Type),
+            StoppingApp = stopping_app(AppName, Id, Type, [From], []),
+            NStopping = store_stopping(StoppingApp, Stopping),
+
 		    NRunning = keydelete(AppName, 1, Running),
-		    {reply, ok, S#state{running = NRunning}};
+            {noreply, S#state{running = NRunning, stopping = NStopping}};
 		%% not loaded
-		{false, false, _, _, _,  _} ->
+		{false, false, _, _, _,  _, _} ->
 		    {reply, {error, {not_loaded, AppName}}, S};
 		%% only loaded
-		{false, {true, _Appl}, false, false, false, false} ->
+		{false, {true, _Appl}, false, false, false, false, _} ->
 		    update_permissions(AppName, Bool),
-                    {reply, ok, S}; 
+                    {reply, ok, S};
 		%% starting
-		{false, {true, _Appl}, {value, _Tuple}, false, false, false} ->
+		{false, {true, _Appl}, {value, _Tuple}, false, false, false, _} ->
 		    update_permissions(AppName, Bool),
 		    {reply, ok, S};
 		%% start requested but not started because permit was false
-		{false, {true, _Appl}, false, {value, _Tuple}, false, false} ->
+		{false, {true, _Appl}, false, {value, _Tuple}, false, false, _} ->
 		    update_permissions(AppName, Bool),
 		    SS = S#state{start_p_false = keydelete(AppName, 1, SPF)},
 		    {reply, ok, SS};
 		%% started but not running
-		{false, {true, _Appl}, _,  _, {value, _Tuple}, false} ->
+		{false, {true, _Appl}, _,  _, {value, _Tuple}, false, _} ->
 		    update_permissions(AppName, Bool),
 		    {reply, ok, S}
 
 	    end
     end;
 
-handle_call({stop_application, AppName}, _From, S) ->
-    #state{running = Running, started = Started} = S,
-    case lists:keyfind(AppName, 1, Running) of
-	{_AppName, Id} ->
-	    {_AppName2, Type} = lists:keyfind(AppName, 1, Started),
-	    stop_appl(AppName, Id, Type),
-	    NRunning = keydelete(AppName, 1, Running),
-	    NStarted = keydelete(AppName, 1, Started),
-	    cntrl(AppName, S, {ac_application_stopped, AppName}),
-	    {reply, ok, S#state{running = NRunning, started = NStarted}};
-	false ->
-	    case lists:keymember(AppName, 1, Started) of
-		true ->
-		    NStarted = keydelete(AppName, 1, Started),
-		    cntrl(AppName, S, {ac_application_stopped, AppName}),
-		    {reply, ok, S#state{started = NStarted}};
-		false ->
-		    {reply, {error, {not_started, AppName}}, S}
-	    end
+handle_call({stop_application, AppName}, From, S) ->
+    #state{running = Running, started = Started, stopping = Stopping} = S,
+    StoppedCallback = fun(AN, State) ->
+                          cntrl(AN, State, {ac_application_stopped, AN}),
+                          State
+                      end,
+    case lists:keyfind(AppName, 1, Stopping) of
+        false ->
+            case lists:keyfind(AppName, 1, Running) of
+        	{_AppName, Id} ->
+        	    {_AppName2, Type} = lists:keyfind(AppName, 1, Started),
+
+                NRunning = keydelete(AppName, 1, Running),
+                NStarted = keydelete(AppName, 1, Started),
+
+                run_stop_appl(AppName, Id, Type),
+                
+                StoppingApp = stopping_app(AppName, Id, Type, [From], [StoppedCallback]),
+                NStopping = store_stopping(StoppingApp, Stopping),
+
+        	    {noreply, S#state{running = NRunning,
+                                  started = NStarted,
+                                  stopping = NStopping}};
+        	false ->
+        	    case lists:keymember(AppName, 1, Started) of
+        		true ->
+        		    NStarted = keydelete(AppName, 1, Started),
+        		    cntrl(AppName, S, {ac_application_stopped, AppName}),
+        		    {reply, ok, S#state{started = NStarted}};
+        		false ->
+        		    {reply, {error, {not_started, AppName}}, S}
+        	    end
+            end;
+        #stopping_app{requesters = Requesters, callbacks = Callbacks} = StoppingApp ->
+            NStoppingApp = StoppingApp#stopping_app{
+                requesters = [From | Requesters],
+                callbacks = [StoppedCallback | Callbacks]},
+            NStopping = store_stopping(NStoppingApp, Stopping),
+            {noreply, S#state{stopping = NStopping}}
     end;
 
 handle_call({change_application_data, Applications, Config}, _From, S) ->
@@ -908,17 +940,39 @@ handle_call(info, _From, S) ->
 	     {started, S#state.started},
 	     {start_p_false, S#state.start_p_false},
 	     {running, S#state.running},
-	     {starting, S#state.starting}],
+	     {starting, S#state.starting},
+         {stopping, S#state.stopping}],
     {reply, Reply, S}.
 
--spec handle_cast({'application_started', appname(), _}, state()) ->
+-spec handle_cast({'application_started' | 'application_stopped', appname(), _}, state()) ->
         {'noreply', state()} | {'stop', string(), state()}.
+
+handle_cast({application_stopped, AppName, {Id, Type}}, S) ->
+    #state{stopping = Stopping} = S,
+    #stopping_app{id = Id, type = Type,
+                  requesters = Requesters,
+                  callbacks = Callbacks} = lookup_stopping(AppName, Stopping),
+    lists:foreach(
+        fun(Callback) ->
+            case is_function(Callback, 2) of
+                true  -> Callback(AppName, S);
+                false -> ok
+            end
+        end,
+        Callbacks),
+    lists:foreach(
+        fun(Requester) ->
+            gen_server:reply(Requester, ok)
+        end,
+        Requesters),
+    NStopping = remove_stopping(AppName, Stopping),
+    {noreply, S#state{stopping = NStopping}};
 
 handle_cast({application_started, AppName, Res}, S) ->
     handle_application_started(AppName, Res, S).
 
 handle_application_started(AppName, Res, S) ->
-    #state{starting = Starting, running = Running, started = Started, 
+    #state{starting = Starting, running = Running, started = Started,
 	   start_req = Start_req} = S,
     Start_reqN = reply_to_requester(AppName, Start_req, Res),
     {_AppName, RestartType, _Type, _From} = lists:keyfind(AppName, 1, Starting),
@@ -945,16 +999,22 @@ handle_application_started(AppName, Res, S) ->
 		{{ok, Perms}, {distributed, StartNode}} when StartNode =:= node() ->
 		    case lists:member({AppName, false}, Perms) of
 			true ->
-			    #state{running = StopRunning, started = StopStarted} = NewS,
+			    #state{running = StopRunning, started = StopStarted, stopping = Stopping} = NewS,
 			    case lists:keyfind(AppName, 1, StopRunning) of
 				{_AppName, Id} ->
 				    {_AppName2, Type} =
 					lists:keyfind(AppName, 1, StopStarted),
-				    stop_appl(AppName, Id, Type),
+                    run_stop_appl(AppName, Id, Type),
+                    Callback = fun(AN, State) ->
+                        cntrl(AN, State, {ac_application_stopped, AN}),
+                        State
+                    end,
+                    StoppingApp = stopping_app(AppName, Id, Type, [], [Callback]),
+                    NStopStopping = store_stopping(StoppingApp, Stopping),
 				    NStopRunning = keydelete(AppName, 1, StopRunning),
-				    cntrl(AppName, NewS, {ac_application_stopped, AppName}),
-				    {noreply, NewS#state{running = NStopRunning, 
-							started = StopStarted}};
+				    {noreply, NewS#state{running = NStopRunning,
+							started = StopStarted,
+                            stopping = NStopStopping}};
 				false ->
 				    {noreply, NewS}
 			    end;
@@ -1029,14 +1089,14 @@ handle_info({ac_start_application_reply, AppName, Res}, S) ->
 		    spawn_starter(From, Appl, S, Type),
 		    {noreply, S};
 		{started, Node} ->
-		    handle_application_started(AppName, 
-					       {ok, {distributed, Node}}, 
+		    handle_application_started(AppName,
+					       {ok, {distributed, Node}},
 					       S);
 		not_started ->
 		    Started = S#state.started,
 		    Start_reqN =
 			reply_to_requester(AppName, Start_req, ok),
-		    {noreply, 
+		    {noreply,
 		     S#state{starting = keydelete(AppName, 1, Starting),
 			     started = [{AppName, RestartType} | Started],
 			     start_req = Start_reqN}};
@@ -1063,14 +1123,17 @@ handle_info({ac_change_application_req, AppName, Msg}, S) ->
     Running = S#state.running,
     Started = S#state.started,
     Starting = S#state.starting,
+    Stopping = S#state.stopping,
     case {keyfind(AppName, 1, Running), keyfind(AppName, 1, Started)} of
 	{{AppName, Id}, {_AppName2, Type}} ->
 	    case Msg of
 		{started, Node} ->
-		    stop_appl(AppName, Id, Type),
+            run_stop_appl(AppName, Id, Type),
+            StoppingApp = stopping_app(AppName, Id, Type, [], []),
+            NStopping = store_stopping(StoppingApp, Stopping),
 		    NRunning = [{AppName, {distributed, Node}} |
 				keydelete(AppName, 1, Running)],
-		    {noreply, S#state{running = NRunning}};
+		    {noreply, S#state{running = NRunning, stopping = NStopping}};
 		{takeover, _Node, _RT} when is_pid(Id) -> % it is running already
 		    notify_cntrl_started(AppName, Id, S, ok),
 		    {noreply, S};
@@ -1084,7 +1147,7 @@ handle_info({ac_change_application_req, AppName, Msg}, S) ->
 		    case application:get_key(AppName, start_phases) of
 			{ok, undefined} ->
 			    %% to be backwards compatible the application
-			    %% is not started as failover if start_phases  
+			    %% is not started as failover if start_phases
 			    %% is not defined in the .app file
 			    NewS = do_start(AppName, RT, normal, undefined, S),
 			    {noreply, NewS};
@@ -1093,11 +1156,16 @@ handle_info({ac_change_application_req, AppName, Msg}, S) ->
 			    {noreply, NewS}
 		    end;
 		stop_it ->
-		    stop_appl(AppName, Id, Type),
-		    cntrl(AppName, S, {ac_application_not_run, AppName}),
-		    NRunning = keyreplace(AppName, 1, Running, 
+            run_stop_appl(AppName, Id, Type),
+            Callback = fun(AN, State) ->
+                cntrl(AN, State, {ac_application_not_run, AN}),
+                State
+            end,
+            StoppingApp = stopping_app(AppName, Id, Type, [], [Callback]),
+            NStopping = store_stopping(StoppingApp, Stopping),
+		    NRunning = keyreplace(AppName, 1, Running,
 					 {AppName, {distributed, []}}),
-		    {noreply, S#state{running = NRunning}};
+		    {noreply, S#state{running = NRunning, stopping = NStopping}};
 		%% We should not try to start a running application!
 		start_it when is_pid(Id) ->
 		    notify_cntrl_started(AppName, Id, S, ok),
@@ -1116,26 +1184,38 @@ handle_info({ac_change_application_req, AppName, Msg}, S) ->
 	    IsStarting = lists:keysearch(AppName, 1, Starting),
 	    IsStarted = lists:keysearch(AppName, 1, Started),
 	    IsRunning = lists:keysearch(AppName, 1, Running),
+        IsStopping = lookup_stopping(AppName, Stopping),
 
 	    case Msg of
 		start_it ->
-		    case {IsLoaded, IsStarting, IsStarted, IsRunning} of
+		    case {IsLoaded, IsStarting, IsStarted, IsRunning, IsStopping} of
 			%% already running
-			{_, _, _, {value, _Tuple}} ->
+			{_, _, _, {value, _Tuple}, _} ->
 			    {noreply, S};
 			%% not loaded
-			{false, _, _, _} ->
+			{false, _, _, _, _} ->
 			    {noreply, S};
 			%% only loaded
-			{{true, _Appl}, false, false, false} ->
+			{{true, _Appl}, false, false, false, _} ->
 			    {noreply, S};
 			%% starting
-			{{true, _Appl}, {value, Tuple}, false, false} ->
+			{{true, _Appl}, {value, Tuple}, false, false, _} ->
 			    {_AppName, _RStype, _Type, From} = Tuple,
 			    NewS = do_start(AppName, undefined, normal, From, S),
 			    {noreply, NewS};
+            %% started, not running but stopping
+            {{true, _Appl}, _, {value, {AppName, _RestartType}}, false, {value, StoppingApp}} ->
+                Callback = fun(AN, CS) ->
+                    #state{started = CStarted} = CS,
+                    NCS = do_start(AN, undefined, normal, undefined, CS),
+                    NCS#state{started = keydelete(AN, 1, CStarted)}
+                end,
+                Callbacks = StoppingApp#stopping_app.callbacks,
+                NStoppingApp = StoppingApp#stopping_app{callbacks = [Callback | Callbacks]},
+                NStopping = store_stopping(NStoppingApp, Stopping),
+                {noreply, S#state{stopping = NStopping}};
 			%% started but not running
-			{{true, _Appl}, _, {value, {AppName, _RestartType}}, false} ->
+			{{true, _Appl}, _, {value, {AppName, _RestartType}}, false, _} ->
 			    NewS = do_start(AppName, undefined, normal, undefined, S),
 			    SS = NewS#state{started = keydelete(AppName, 1, Started)},
 			    {noreply, SS}
@@ -1174,7 +1254,7 @@ handle_info({'EXIT', Pid, Reason}, S) ->
 	false ->
 	    {noreply, S#state{control = del_cntrl(S#state.control, Pid)}}
     end;
-    
+
 handle_info(_, S) ->
     {noreply, S}.
 
@@ -1192,7 +1272,7 @@ terminate(Reason, S) ->
 	    undefined -> infinity;
 	    {ok,T} -> T
 	end,
-    foreach(fun({_AppName, Id}) when is_pid(Id) -> 
+    foreach(fun({_AppName, Id}) when is_pid(Id) ->
 		    Ref = erlang:monitor(process, Id),
 		    unlink(Id),
 		    exit(Id, shutdown),
@@ -1229,7 +1309,7 @@ cntrl(AppName, #state{control = Control}, Msg) ->
 	{_AppName, Pid} ->
 	    Pid ! Msg,
 	    true;
-	false -> 
+	false ->
 	    false
     end.
 
@@ -1237,7 +1317,7 @@ notify_cntrl_started(_AppName, {distributed, _Node}, _S, _Res) ->
     ok;
 notify_cntrl_started(AppName, _Id, S, Res) ->
     cntrl(AppName, S, {ac_application_run, AppName, Res}).
-    
+
 del_cntrl([{_, Pid}|T], Pid) ->
     del_cntrl(T, Pid);
 del_cntrl([H|T], Pid) ->
@@ -1247,11 +1327,11 @@ del_cntrl([], _Pid) ->
 
 get_loaded(App) ->
     AppName = get_appl_name(App),
-    case ets:lookup(ac_tab, {loaded, AppName}) of 
+    case ets:lookup(ac_tab, {loaded, AppName}) of
 	[{_Key, Appl}] -> {true, Appl};
 	_  -> false
     end.
-    
+
 do_load_application(Application, S) ->
     case get_loaded(Application) of
 	{true, _} ->
@@ -1274,7 +1354,7 @@ load(S, {ApplData, ApplEnv, IncApps, Descr, Id, Vsn, Apps}) ->
     NewEnv3 = keyreplaceadd(included_applications, 1, NewEnv2,
 			    {included_applications, IncApps}),
     add_env(Name, NewEnv3),
-    Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn, 
+    Appl = #appl{name = Name, descr = Descr, id = Id, vsn = Vsn,
 		 appl_data = ApplData, inc_apps = IncApps, apps = Apps},
     ets:insert(ac_tab, {{loaded, Name}, Appl}),
     NewS =
@@ -1332,7 +1412,7 @@ do_start(AppName, RT, Type, From, S) ->
 		      false ->
 			  RT
 		  end,
-    %% UW 990913: We check start_req instead of starting, because starting 
+    %% UW 990913: We check start_req instead of starting, because starting
     %% has already been checked.
     case lists:keymember(AppName, 1, S#state.start_req) of
 	false ->
@@ -1342,27 +1422,27 @@ do_start(AppName, RT, Type, From, S) ->
 	    Starting = case lists:keymember(AppName, 1, S#state.starting) of
 			   false ->
 			       %% UW: don't know if this is necessary
-			       [{AppName, RestartType, Type, From} | 
+			       [{AppName, RestartType, Type, From} |
 				S#state.starting];
 			   true ->
 			       S#state.starting
 		       end,
-	    S#state{starting = Starting, 
+	    S#state{starting = Starting,
 		    start_req = [{AppName, From} | Start_req]};
 	true -> % otherwise we're already starting the app...
 	    S
     end.
-    
+
 spawn_starter(From, Appl, S, Type) ->
     spawn_link(?MODULE, init_starter, [From, Appl, S, Type]).
 
 init_starter(_From, Appl, S, Type) ->
     process_flag(trap_exit, true),
     AppName = Appl#appl.name,
-    gen_server:cast(?AC, {application_started, AppName, 
+    gen_server:cast(?AC, {application_started, AppName,
 			  catch start_appl(Appl, S, Type)}).
 
-reply(undefined, _Reply) -> 
+reply(undefined, _Reply) ->
     ok;
 reply(From, Reply) -> gen_server:reply(From, Reply).
 
@@ -1391,10 +1471,33 @@ start_appl(Appl, S, Type) ->
 	    end
     end.
 
-    
+
 %%-----------------------------------------------------------------
 %% Stop application locally.
 %%-----------------------------------------------------------------
+run_stop_appl(AppName, Id, Type) ->
+    case is_pid(Id) of
+        true  -> unlink(Id);
+        false -> ok
+    end,
+    spawn_link(fun() ->
+        stop_appl(AppName, Id, Type),
+        gen_server:cast(?AC, {application_stopped, AppName, {Id, Type}})
+    end).
+
+stopping_app(Name, Id, Type, Requesters, Callbacks) ->
+    #stopping_app{name = Name, id = Id, type = Type,
+                  requesters = Requesters, callbacks = Callbacks}.
+
+store_stopping(#stopping_app{name = Name} = App, Stopping) ->
+    keyreplaceadd(Name, 2, Stopping, App).
+
+lookup_stopping(Name, Stopping) ->
+    lists:keyfind(Name, 2, Stopping).
+
+remove_stopping(Name, Stopping) ->
+    keydelete(Name, 2, Stopping).
+
 stop_appl(AppName, Id, Type) when is_pid(Id) ->
     unlink(Id),
     application_master:stop(Id),
@@ -1405,7 +1508,7 @@ stop_appl(AppName, undefined, Type) ->
     info_exited(AppName, stopped, Type);
 stop_appl(_AppName, _Id, _Type) ->
     %% Distributed application stopped
-    ok. 
+    ok.
 
 keysearchdelete(Key, Pos, List) ->
     ksd(Key, Pos, List, []).
@@ -1416,7 +1519,7 @@ ksd(Key, Pos, [H | T], Rest) ->
     ksd(Key, Pos, T, [H | Rest]);
 ksd(_Key, _Pos, [], _Rest) ->
     false.
-    
+
 keyreplaceadd(Key, Pos, List, New) ->
     %% Maintains the order!
     case lists:keymember(Key, Pos, List) of
@@ -1432,7 +1535,7 @@ validRestartType(RestartType) ->
 
 nd({distributed, Node}) -> Node;
 nd(_) -> node().
-	  
+
 get_restart_type(undefined, OldRT) ->
     OldRT;
 get_restart_type(RT, _OldRT) ->
@@ -1451,7 +1554,7 @@ make_appl(Name) when is_atom(Name) ->
 	    case prim_consult(FullName) of
 		{ok, [Application]} ->
 		    {ok, make_appl_i(Application)};
-		{error, Reason} -> 
+		{error, Reason} ->
 		    {error, {file:format_error(Reason), FName}};
                 error ->
                     {error, "bad encoding"}
@@ -1527,7 +1630,7 @@ make_appl_i(Appl) -> throw({error, {bad_application, Appl}}).
 
 
 %%-----------------------------------------------------------------
-%% Merge current applications with changes.  
+%% Merge current applications with changes.
 %%-----------------------------------------------------------------
 
 %% do_change_apps(Applications, Config, OldAppls) -> NewAppls
@@ -1617,9 +1720,9 @@ conv([Key, Val | T]) ->
     [{make_term(Key), make_term(Val)} | conv(T)];
 conv(_) -> [].
 
-make_term(Str) -> 
+make_term(Str) ->
     case erl_scan:string(Str) of
-	{ok, Tokens, _} ->		  
+	{ok, Tokens, _} ->
 	    case erl_parse:parse_term(Tokens ++ [{dot, 1}]) of
 		{ok, Term} ->
 		    Term;
@@ -1715,7 +1818,7 @@ do_prep_config_change([], EnvBefore) ->
 do_prep_config_change([{App, _Id} | Apps], EnvBefore) ->
     Env = application:get_all_env(App),
     do_prep_config_change(Apps, [{App, Env} | EnvBefore]).
-    
+
 
 
 %%-----------------------------------------------------------------
@@ -1736,7 +1839,7 @@ do_config_change([{App, _Id} | Apps], EnvBefore, Errors) ->
 		       {App, AppEnvBeforeT} ->
 			   lists:sort(AppEnvBeforeT)
 		   end,
-    Res = 
+    Res =
 	case AppEnvNow of
 	    AppEnvBefore ->
 		ok;
@@ -1747,12 +1850,12 @@ do_config_change([{App, _Id} | Apps], EnvBefore, Errors) ->
 		    {Changed, New, Removed} ->
 			case application:get_key(App, mod) of
 			    {ok, {Mod, _Para}} ->
-				case catch Mod:config_change(Changed, New, 
+				case catch Mod:config_change(Changed, New,
 							     Removed) of
 				    ok ->
 					ok;
 				    %% It is not considered as an error
-				    %% if the cb-function is not defined 
+				    %% if the cb-function is not defined
 				    {'EXIT', {undef, _}} ->
 					ok;
 				    {error, _} = Error ->
@@ -1767,7 +1870,7 @@ do_config_change([{App, _Id} | Apps], EnvBefore, Errors) ->
 			end
 		end
 	end,
-    
+
     case Res of
 	ok ->
 	    do_config_change(Apps, EnvBefore, Errors);
@@ -1792,7 +1895,7 @@ do_config_diff([{Env, Value} | AppEnvNow], AppEnvBefore, {Changed, New}) ->
 	{Env, Value} ->
 	    do_config_diff(AppEnvNow, lists:keydelete(Env,1,AppEnvBefore), {Changed, New});
 	{Env, _OtherValue} ->
-	    do_config_diff(AppEnvNow, lists:keydelete(Env,1,AppEnvBefore), 
+	    do_config_diff(AppEnvNow, lists:keydelete(Env,1,AppEnvBefore),
 			   {[{Env, Value} | Changed], New});
 	false ->
 	    do_config_diff(AppEnvNow, AppEnvBefore, {Changed, [{Env, Value}|New]})
@@ -1902,7 +2005,7 @@ only_ws([C|Cs]) when C =< $\s -> only_ws(Cs);
 only_ws([$%|Cs]) -> only_ws(strip_comment(Cs));   % handle comment
 only_ws([_|_]) -> false;
 only_ws([]) -> true.
-    
+
 strip_comment([$\n|Cs]) -> Cs;
 strip_comment([_|Cs]) -> strip_comment(Cs);
 strip_comment([]) -> [].
@@ -1928,7 +2031,7 @@ info_exited(Name, Reason, Type) ->
 
 
 %%-----------------------------------------------------------------
-%% Reply to all processes waiting this application to be started.  
+%% Reply to all processes waiting this application to be started.
 %%-----------------------------------------------------------------
 reply_to_requester(AppName, Start_req, Res) ->
     R = case Res of
@@ -1951,10 +2054,10 @@ reply_to_requester(AppName, Start_req, Res) ->
 		end,
 		[],
 		Start_req).
-    
+
 
 %%-----------------------------------------------------------------
-%% Update the environment variable permission for an application.  
+%% Update the environment variable permission for an application.
 %%-----------------------------------------------------------------
 update_permissions(AppName, Bool) ->
     T = {env, kernel, permissions},
@@ -1967,7 +2070,7 @@ update_permissions(AppName, Bool) ->
     end.
 
 %%-----------------------------------------------------------------
-%% These functions are only to be used from testsuites.  
+%% These functions are only to be used from testsuites.
 %%-----------------------------------------------------------------
 test_change_apps(Apps, Conf) ->
     Res = test_make_apps(Apps, []),
