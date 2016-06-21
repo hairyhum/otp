@@ -752,6 +752,11 @@ handle_call({permit_application, AppName, Bool}, From, S) ->
                     {reply, ok, S}; %% check the permission after then app is started
 		%% start requested but not started because permit was false
 		{true, {true, Appl}, false, {value, Tuple}, false, false, _} ->
+
+        %% TODO: figure out how to stat stopping applications
+        %% They can be stopping due to unpermit/stop request and could have
+        %% different outcomes (stopping cancel/starting)
+
 		    update_permissions(AppName, Bool),
 		    {_AppName2, RestartType, normal, _From} = Tuple,
 		    spawn_starter(From, Appl, S, normal),
@@ -771,13 +776,14 @@ handle_call({permit_application, AppName, Bool}, From, S) ->
 		%%==========================
 		%% unpermit the application
 		%%==========================
-		%% running
+		%% stopping
         {false, _, _, _,  _, _, {value, StoppingApp}} ->
             Requesters = StoppingApp#stopping_app.requesters,
             NStoppingApp = StoppingApp#stopping_app{requesters = [From | Requesters]},
             NStopping = store_stopping(NStoppingApp, Stopping),
             {noreply, S#state{stopping = NStopping}};
-		{false, _, _, _,  _, {value, {_AppName, Id}}, _} ->
+		%% running
+        {false, _, _, _,  _, {value, {_AppName, Id}}, _} ->
 		    {_AppName2, Type} = lists:keyfind(AppName, 1, Started),
 		    run_stop_appl(AppName, Id, Type),
             StoppingApp = stopping_app(AppName, Id, Type, [From], []),
